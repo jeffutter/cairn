@@ -2,6 +2,7 @@ import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, TextView, InputState, Input } from "gpui-base";
 import { spaces, panes, focused, exec, appHome, run, theme, settings, notify, nextCommand } from "herdr";
 import * as fs from "fs/promises";
+import { Buffer } from "buffer";
 
 // herdr draws no http or data: images (TextView ignores them), only image(path) for a file
 // under the app folder. So image artifacts, svg diagrams and markdown cairn: embeds are
@@ -37,6 +38,15 @@ function flattenCssVars(svg) {
   const resolve = (text, depth = 0) => depth > 8 ? text : text.replace(/var\(\s*(--[\w-]+)\s*(?:,\s*((?:[^()]|\([^()]*\))*))?\)/g,
     (_m, name, fallback) => resolve(defs[name] && !defs[name].includes(`var(${name}`) ? defs[name] : fallback ?? "inherit", depth + 1));
   return resolve(svg);
+}
+
+// The body of a Block that is exactly one fenced code block, else null.
+function codeFence(text) {
+  const lines = text.split("\n"), f = /^ {0,3}(`{3,}|~{3,})/.exec(lines[0]);
+  if (!f) return null;
+  const last = lines.length > 1 ? lines[lines.length - 1].trim() : "";
+  const closed = last.length >= f[1].length && last === f[1][0].repeat(last.length);
+  return lines.slice(1, closed ? -1 : undefined).join("\n");
 }
 
 // Splits lines[from, to) into Blocks {text, start, end} (1-based, inclusive, blank lines excluded):
@@ -377,14 +387,17 @@ export default class Cairn extends View {
   }
 
   // Returns { path, w, h } for an image or diagram (cairn renders Mermaid itself), cached per
-  // id@rev because revisions are immutable. Null on another machine: the cache is local.
+  // machine and id@rev because revisions are immutable. On another machine the files are
+  // produced there and copied back as base64 over exec (stdout is text, capped at 8 MiB).
   async fetchPic(id, rev, loc) {
-    if (loc.on) return null;
-    const rel = `${CACHE}/${id}@${rev}`, dir = `${appHome()}/${rel}`;
+    const tag = loc.on ? `${loc.on.replace(/[^\w.-]/g, "_")}-` : "";
+    const rel = `${CACHE}/${tag}${id}@${rev}`, dir = `${appHome()}/${rel}`;
     if (!(await fs.exists(dir))) {
       await fs.mkdir(dir, { recursive: true });
-      try { await this.cairn(["--json", "get", `${id}@${rev}`, "--out", dir], loc); }
-      catch (e) { await fs.rmdir(dir).catch(() => {}); throw e; }
+      try {
+        if (loc.on) await this.copyRemotePic(`${id}@${rev}`, dir, loc);
+        else await this.cairn(["--json", "get", `${id}@${rev}`, "--out", dir], loc);
+      } catch (e) { await fs.rmdir(dir).catch(() => {}); throw e; }
     }
     const file = (await fs.readdir(dir))[0];
     if (file?.endsWith(".svg")) {
@@ -392,6 +405,18 @@ export default class Cairn extends View {
       if (svg.includes("var(--")) await fs.writeFile(`${dir}/${file}`, flattenCssVars(svg));
     }
     return file ? { path: `${rel}/${file}`, ...(await naturalSize(`${dir}/${file}`)) } : null;
+  }
+
+  // Renders the first file of `ref` into a temp dir on the remote machine and writes it to
+  // `dir` here. Line 1 of the output is the file name, the rest is its base64.
+  async copyRemotePic(ref, dir, { cwd, on }) {
+    const script = 'd=$(mktemp -d) || exit 1; trap \'rm -rf "$d"\' EXIT; cairn get "$1" --out "$d" >/dev/null || exit 1; f=$(ls "$d" | head -n1); printf "%s\\n" "$f"; base64 < "$d/$f"';
+    const r = await exec("sh", ["-c", script, "sh", ref], { cwd, on, timeout: 30000 });
+    if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim() || `remote cairn exited ${r.code}`);
+    const nl = r.stdout.indexOf("\n"), name = r.stdout.slice(0, nl).replace(/[^\w.@-]/g, "_");
+    if (nl < 1 || !name) throw new Error("remote cairn produced no file");
+    if (r.stdout.length >= 8 * 1024 * 1024 - 1024) throw new Error("image too large to copy from the remote machine");
+    await fs.writeFile(`${dir}/${name}`, Buffer.from(r.stdout.slice(nl + 1).replace(/\s+/g, ""), "base64"));
   }
 
   // Opens the artifact in the cairn web UI. `cairn view` prints the URL (honoring CAIRN_URL);
@@ -409,6 +434,13 @@ export default class Cairn extends View {
         if (r.code !== 0) throw new Error(r.stderr);
       } catch (e) { notify({ title: "Cairn", body: `Cannot open browser: ${e.message ?? e}`, level: "error" }); }
     });
+  }
+
+  // TextView.markdown has no styling hooks, so a fenced block is drawn here: raised background,
+  // border and the mono font, which sets it apart from prose far more than TextView's default.
+  codeBlock(code, t) {
+    return div().w_full().p(10).rounded(6).border_1().border_color(t.border).bg(t.raised)
+      .font_family(settings().font_family ?? "JetBrains Mono").text_size(12).text_color(t.foreground).child(code);
   }
 
   picElement(pic, t) {
@@ -489,7 +521,7 @@ export default class Cairn extends View {
           .when(d && d.kind === "markdown", (e) => e.children((d.parts ?? []).map((p, i) => withThreads(i, p.embed
             ? (p.pic ? this.picElement(p.pic, t) : div().text_size(11).text_color(t.dim).child(`[embedded ${p.embed.target_id}${p.embed.dangling ? " (deleted)" : " cannot be shown here"}${p.embed.alt ? `: ${p.embed.alt}` : ""}]`))
             : h_flex().gap(6).items_start()
-                .child(div().flex_1().min_w(0).child(TextView.markdown(`cairn-md-${i}`, p.text).selectable()))
+                .child(div().flex_1().min_w(0).child(codeFence(p.text) ? this.codeBlock(codeFence(p.text), t) : TextView.markdown(`cairn-md-${i}`, p.text).selectable()))
                 .when(Boolean(item), (e) => e.child(div().id(`cairn-blk-${i}`).flex_none().px(7).py(3).rounded(5).cursor_pointer().text_size(11).text_color(t.muted).hover((s) => s.bg(t.hover))
                   .on_click((_e, cx) => {
                     if (p.section !== undefined) { this.openComposer(["section", p.section], (text, cx) => this.write(["add", `${item.id}@${d.rev}`, "--section", p.section, "--", text], item.id, cx), cx); return; }
