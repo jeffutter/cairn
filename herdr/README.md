@@ -44,6 +44,7 @@ Link the folder per file (`recursive = true`) so Herdr can write its own files b
 - When an Artifact is created or gets a new Revision, the panel opens on it. The first look at a space is a silent baseline, so existing Artifacts do not read as new.
 - Header: back to the list, and **Open** to view the Artifact in the web UI (it says so if `cairn serve` is not running).
 - html bundles are not drawn: Herdr has no web view. The panel says so, and Open shows them.
+- **Escape** with the panel focused closes it (hides the `panel` column). In the comment composer, Escape discards the draft instead.
 
 - Each comment Thread card has a **Resolve** button (open Threads) or **Reopen** button (resolved Threads), stale Threads included. It runs `cairn comment resolve|reopen` as the reviewer, reloads the Artifact at once, and shows a failure as an inline error on that card.
 - Each Thread card also has a **Reply** button, on open, resolved and stale Threads alike. It opens the inline composer under that Thread and Send runs `cairn comment add ID BODY --reply THREAD_ID` as the reviewer; the panel reloads and shows the reply at once. Reply drafts are kept per space, Artifact and Thread.

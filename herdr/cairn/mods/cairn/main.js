@@ -292,7 +292,7 @@ export default class Cairn extends View {
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12).font_medium()
       .when(on, (e) => e.cursor_pointer().hover((s) => s.opacity(0.88)).on_click((_e, cx) => on(cx)))
       .when(!on, (e) => e.opacity(0.5)).child(label);
-    return v_flex().id("cairn-composer").track_focus(this.handle).flex_none().gap(6).p(8).rounded(7).border_1().border_color(t.border)
+    return v_flex().id("cairn-composer").flex_none().gap(6).p(8).rounded(7).border_1().border_color(t.border)
       .on_key_down((e, cx) => { if (e.key === "escape") { this.closeComposer({ discard: true }); cx.stop_propagation(); cx.notify(); } })
       .child(Input.new(this.input).h(32).px(10).rounded(7).border_1().border_color(this.inputFocused ? t.accent : t.input).bg(t.background).text_size(12.5).text_color(t.foreground))
       .when(this.writeErrorThread === null && Boolean(this.writeError), (e) => e.child(this.writeErrorLine(t)))
@@ -542,7 +542,7 @@ export default class Cairn extends View {
   render(cx) {
     if (key() !== this.context) this.refresh(cx);
     const t = theme();
-    return v_flex().id("cairn").on_size_change((size, cx) => { if (this.width !== size.width) { this.width = size.width; cx.notify(); } }).size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+    return v_flex().id("cairn").track_focus(this.handle).on_key_down((e, cx) => { if (e.key === "escape") { run("layout.hide", { id: PANEL.id }); cx.stop_propagation(); } }).on_size_change((size, cx) => { if (this.width !== size.width) { this.width = size.width; cx.notify(); } }).size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .children(this.view ? this.detailView(t) : this.indexView(t));
   }
 }
