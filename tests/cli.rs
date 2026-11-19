@@ -122,7 +122,10 @@ mod roundtrip {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(b"# hi\n").unwrap();
+        // Invalid args make the child exit before it reads stdin, so the write can
+        // race with the exit and fail with a broken pipe. The exit code is what
+        // callers assert on, so the write result is intentionally ignored.
+        let _ = child.stdin.take().unwrap().write_all(b"# hi\n");
         child.wait_with_output().unwrap()
     }
 
