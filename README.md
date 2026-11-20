@@ -6,16 +6,41 @@ Everything runs on your machine. Cairn is one binary with one sqlite file. It ha
 
 ## Install
 
-Download the tarball for your platform (Linux x86_64 or macOS aarch64) from the [releases page](https://github.com/jeffutter/cairn/releases) and put `cairn` on your `PATH`.
+### From a GitHub release
 
-With Nix:
+Each [release](https://github.com/jeffutter/cairn/releases) has a tarball and a `.sha256` file for Linux x86_64 and macOS aarch64 (Apple Silicon). Intel Macs and Linux on ARM have no prebuilt binary; use Nix or build from source.
 
 ```sh
-nix build github:jeffutter/cairn     # the binary
-nix run github:jeffutter/cairn -- serve
+# Pick one: linux-x86_64 or macos-aarch64
+PLATFORM=macos-aarch64
+VERSION=v0.1.0
+BASE=https://github.com/jeffutter/cairn/releases/download/$VERSION
+curl -fLO $BASE/cairn-$VERSION-$PLATFORM.tar.gz
+curl -fLO $BASE/cairn-$VERSION-$PLATFORM.sha256
+
+shasum -a 256 -c cairn-$VERSION-$PLATFORM.sha256   # expect "OK"
+tar xzf cairn-$VERSION-$PLATFORM.tar.gz
+install -m 755 cairn ~/.local/bin/cairn            # any directory on your PATH
+cairn --version
 ```
 
-Build from source inside `nix develop`. A plain `cargo build` compiles, but it leaves out the Mermaid renderer.
+The tarball holds the single `cairn` binary. It is not code-signed. If you download it in a browser on macOS and Gatekeeper blocks it, clear the quarantine flag with `xattr -d com.apple.quarantine cairn`. Downloading with `curl` as above does not set it.
+
+### With Nix
+
+The repository is a flake. It supports the default flake systems, so it also builds on Intel Macs and Linux on ARM.
+
+```sh
+nix run github:jeffutter/cairn -- serve       # run without installing
+nix profile install github:jeffutter/cairn    # install into your profile
+nix build github:jeffutter/cairn              # ./result/bin/cairn
+```
+
+Pin a release with `github:jeffutter/cairn/v0.1.0`. To use it from another flake, add `inputs.cairn.url = "github:jeffutter/cairn"` and use `inputs.cairn.packages.${system}.default`.
+
+### From source
+
+Build inside `nix develop`, which provides the Mermaid renderer and the htmx script that `build.rs` embeds. A plain `cargo build` outside Nix compiles, but Mermaid diagrams fail at runtime.
 
 ## Set up your agent
 
@@ -96,4 +121,30 @@ The design is written down in [`docs/`](docs/README.md): the [CLI reference](doc
 
 ## Herdr
 
-[`herdr/`](herdr/README.md) holds a [Herdr](https://herdr.dev) mod: a side panel that follows the project's artifacts and opens on a new or updated one. The flake exports it as `packages.<system>.herdr-mod`.
+[Herdr](https://herdr.dev) is a terminal multiplexer for coding agents. [`herdr/`](herdr/README.md) holds a cairn mod for it: a side panel that lists the current project's artifacts, opens by itself when the agent submits one or revises one, and shows it next to the agent. You can read markdown, images, and diagrams there and comment, reply, resolve, and reopen threads without leaving the terminal. HTML bundles are not drawn (Herdr has no web view), so the panel's **Open** button sends you to the web UI for those.
+
+![Cairn panel in Herdr](herdr/cairn/preview.png)
+
+The mod runs the `cairn` binary, so install cairn first (see [Install](#install)). Then add the mod in one of two ways.
+
+**By hand.** The release tarballs hold only the binary, so get the mod folder from a checkout of this repository:
+
+```sh
+git clone https://github.com/jeffutter/cairn
+mkdir -p ~/.config/herdr-app/mods
+cp -r cairn/herdr/cairn/mods/cairn ~/.config/herdr-app/mods/cairn
+herdr-app check ~/.config/herdr-app/mods/cairn
+```
+
+The mod finds `cairn` on your `PATH`.
+
+**With Nix.** The flake exports the mod as `packages.<system>.herdr-mod`, with its `cairn` pinned to the same flake's binary. In Home Manager:
+
+```nix
+home.file.".config/herdr-app/mods/cairn" = {
+  source = "${inputs.cairn.packages.${pkgs.system}.herdr-mod}/mods/cairn";
+  recursive = true; # Herdr writes its own files into mod folders
+};
+```
+
+Either way, the panel also needs a place in your Herdr layout, and that step is manual. Herdr's shipped layouts are read-only, so clone one, add a `cairn` block to the `panel-body` stack, and add a tab-bar button that selects it. The exact layout node and button code are in [`herdr/README.md`](herdr/README.md#what-it-needs). Run `cairn serve` if you want the **Open** button to work; everything else reads the database directly.
