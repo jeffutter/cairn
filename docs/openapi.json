@@ -3,7 +3,7 @@
   "info": {
     "title": "Cairn API",
     "description": "The Cairn JSON API. Loopback only, no auth, no CORS; a write carrying a foreign Origin is refused.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "paths": {
     "/api/v1/artifacts": {
