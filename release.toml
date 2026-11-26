@@ -7,3 +7,10 @@ publish = false
 # cd.yml fires on tags matching [v]?N.N.N.
 tag-name = "v{{version}}"
 allow-branch = ["main"]
+
+# Two checked-in snapshots carry the crate version; their tests fail unless the
+# release commit updates them too.
+pre-release-replacements = [
+  { file = "docs/openapi.json", search = '"version": "[0-9]+\.[0-9]+\.[0-9]+"', replace = '"version": "{{version}}"', exactly = 1 },
+  { file = "src/snapshots/cairn__skill__tests__full_output_snapshot.snap", search = 'cairn_version: [0-9]+\.[0-9]+\.[0-9]+', replace = 'cairn_version: {{version}}', exactly = 1 },
+]
