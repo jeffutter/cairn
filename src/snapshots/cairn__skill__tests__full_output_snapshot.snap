@@ -6,7 +6,7 @@ expression: generate()
 name: cairn
 description: Submit documents, diagrams, images and html pages to cairn for human review, and read and answer the reviewer's Comments. Use when you want a human to review or comment on something you produced.
 cairn_version: 0.1.0
-hash: 75768e1444defa08015521e52d797c023eafb7da3e8d44d0ac1ceb1af667309c
+hash: 1efae1f8933e92619cda84c96bfdf2c610743f8c7500d9f46b0cc5095f4a2cd2
 ---
 
 # cairn
@@ -23,7 +23,7 @@ Commands print JSON on stdout when any of `AI_AGENT`, `CLAUDECODE`, `CLAUDE_CODE
 cairn submit plan.md
 ```
 
-2. Tell the human the Artifact id. Wait for Comments. `--wait` blocks until a Comment newer than the highest existing one arrives. Exit 5 means none arrived in time. Run the command again.
+2. Run `cairn view abc123` and give the human the full URL it prints, with the Artifact id (see "Link the human to an Artifact"). Wait for Comments. `--wait` blocks until a Comment newer than the highest existing one arrives. Exit 5 means none arrived in time. Run the command again.
 
 ```sh
 cairn comment list abc123 --wait
@@ -82,13 +82,19 @@ Start a replacement file with a heading at the same level as the Section. Use he
 
 ## Link the human to an Artifact
 
-Only the human starts the web UI, by running `cairn serve` in a terminal. Ask them to run it when they cannot open the Artifact. Do not run `cairn serve` yourself, because it never returns. Print the link to an Artifact:
+`cairn serve` runs the web UI, often as a background service on a port chosen at start. Never guess the URL or the port. After you submit or edit an Artifact, print its full URL and give that URL to the human:
 
 ```sh
 cairn view abc123
 ```
 
-The link loads only while `cairn serve` runs. Tell the human to run `cairn serve` when it does not load.
+`cairn view` prints a URL whether or not a server runs. Check that the URL loads with:
+
+```sh
+cairn status
+```
+
+It prints the URL of the running server. Exit 3 means no server runs: ask the human to start it with `cairn serve` in a terminal, then run `cairn view` again, because the port can change. Do not run `cairn serve` yourself, because it never returns.
 
 ## Reference
 
@@ -111,7 +117,7 @@ Accepted by every command.
 | 0 | Success |
 | 1 | Unexpected error, including database busy past the 5 s timeout |
 | 2 | Usage error, including `delete` without `--yes` |
-| 3 | Not found, including a write to a deleted Artifact |
+| 3 | Not found, including a write to a deleted Artifact and `status` with no running server |
 | 4 | Rejected input: limits, bad Kind, missing embed target, invalid Mermaid, ambiguous or missing Section |
 | 5 | `comment list --wait` timed out with nothing new |
 | 6 | Conflict: `edit --base` named a stale Revision |
@@ -162,14 +168,22 @@ cairn get [OPTIONS] <TARGET>
 
 #### `cairn view`
 
-Print the web UI URL of an Artifact (`abc123` or `abc123@2`) without checking a server
+Print the web UI URL of an Artifact (`abc123` or `abc123@2`), on the running server if there is one
 
 ```
 cairn view [OPTIONS] <TARGET>
 ```
 
 - `<TARGET>`: `abc123` or `abc123@2`
-- `--url <URL>`: UI base URL (default: http://127.0.0.1:<CAIRN_PORT or 7878>) [env: CAIRN_URL]
+- `--url <URL>`: UI base URL (default: the running server's, else http://127.0.0.1:<CAIRN_PORT or 7878>) [env: CAIRN_URL]
+
+#### `cairn status`
+
+Ask the running `cairn serve` for its URL and ports (exit 3 if none is running)
+
+```
+cairn status
+```
 
 #### `cairn outline`
 

@@ -17,7 +17,11 @@
     , crane
     ,
     }:
-    flake-utils.lib.eachDefaultSystem (
+    {
+      # `services.cairn`: `cairn serve` as a launchd agent (nix/home-module.nix).
+      homeManagerModules.default = import ./nix/home-module.nix self;
+    }
+    // flake-utils.lib.eachDefaultSystem (
       system:
       let
         overlays = [ (import rust-overlay) ];

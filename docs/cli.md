@@ -10,6 +10,7 @@ cairn outline <id>[@rev]       cairn comment reopen <thread-id>
 cairn embeds <id>[@rev]        cairn serve
 cairn list                     cairn skill
 cairn delete <id>... --yes     cairn view <id>[@rev]
+cairn status
 ```
 
 ## Global flags
@@ -56,6 +57,7 @@ Text forms:
 | `comment resolve`, `reopen` | `#12 abc123@2 resolved` (or `open`) |
 | `comment list` | `highest_comment_id N`, then one line per Thread (`#id ref status author location [role]: first line`) with its replies indented below |
 | `serve` startup | `ui`, `content` and `reviewer` lines |
+| `status` | `ui` and `content` lines |
 
 ## Exit codes
 
@@ -66,7 +68,7 @@ One Rust table (an enum with descriptions) drives the CLI error handling and the
 | 0 | Success |
 | 1 | Unexpected error, including database busy past the 5 s timeout |
 | 2 | Usage error, including `delete` without `--yes` |
-| 3 | Not found, including a write to a deleted Artifact |
+| 3 | Not found, including a write to a deleted Artifact and `status` with no running server |
 | 4 | Rejected input: limits, bad Kind, missing embed target, invalid Mermaid, ambiguous or missing Section |
 | 5 | `comment list --wait` timed out with nothing new |
 | 6 | Conflict: `edit --base` named a stale Revision |
@@ -117,11 +119,15 @@ Filters: `--kind`, `--session`, `--mine`, `--open` (only Artifacts with an open 
 
 ### serve
 
-`serve` runs axum on `127.0.0.1` unless `--bind <ip>` (env `CAIRN_BIND`) names another address; `--bind 0.0.0.0` listens on every interface, with no authentication and without the loopback `Host` guard ([ADR 0005](adr/0005-serve-untrusted-content-from-a-separate-origin.md)). `--port` (default 7878, env `CAIRN_PORT`) for the UI and API, `--content-port` (default port + 1, env `CAIRN_CONTENT_PORT`) for untrusted content. `--reviewer-name` (env `CAIRN_REVIEWER`, default `reviewer`) is the author the UI posts under, always with role reviewer, separate from the global `--author`. Port 0 is rejected (exit 2), as are equal ports and a UI port of 65535 without `--content-port`. A taken port exits 1 with a message naming it; both ports are bound before anything is served.
+`serve` runs axum on `127.0.0.1` unless `--bind <ip>` (env `CAIRN_BIND`) names another address; `--bind 0.0.0.0` listens on every interface, with no authentication and without the loopback `Host` guard ([ADR 0005](adr/0005-serve-untrusted-content-from-a-separate-origin.md)). `--port` (default 7878, env `CAIRN_PORT`) for the UI and API, `--content-port` (default port + 1, env `CAIRN_CONTENT_PORT`) for untrusted content. Port 0 takes a free port from the OS; with `--port 0` the content port is also free unless given. `--advertise-host <host>` (env `CAIRN_ADVERTISE_HOST`) replaces the bind address in the URLs the server reports; it needs a non-loopback `--bind` and takes no scheme or port (otherwise exit 2). Without it, a wildcard bind reports `127.0.0.1`. `serve` also listens on the control socket `<database path>.sock` ([ADR 0009](adr/0009-find-the-server-through-a-unix-socket.md)), so a second `serve` on the same database exits 1. SIGINT or SIGTERM stops it and removes the socket. `--reviewer-name` (env `CAIRN_REVIEWER`, default `reviewer`) is the author the UI posts under, always with role reviewer, separate from the global `--author`. Equal non-zero ports and a UI port of 65535 without `--content-port` are rejected (exit 2). A taken port exits 1 with a message naming it; both ports are bound before anything is served.
 
 ### view
 
-`view <id>[@rev]` prints `<base>/a/<id>[@rev]` and does not open a browser or check a server is running. The base comes from `--url`, then `CAIRN_URL`, then `http://127.0.0.1:<port>` with the port from `CAIRN_PORT` or 7878. After `serve --bind 0.0.0.0`, set `CAIRN_URL` (e.g. `http://nas.lan:7878`) so `view` prints a URL the Reviewer's browser can open. The skill tells Agents to ask the human to run `cairn serve`.
+`view <id>[@rev]` prints `<base>/a/<id>[@rev]` and does not open a browser or check a server is running. The base comes from `--url`, then `CAIRN_URL`, then the server running on this database (asked over the control socket), then `http://127.0.0.1:<port>` with the port from `CAIRN_PORT` or 7878. After `serve --bind 0.0.0.0`, pass `--advertise-host` (or set `CAIRN_URL` on the CLI side) so `view` prints a URL the Reviewer's browser can open. The skill tells Agents to give the human the `view` URL, check it with `status`, and ask the human to run `cairn serve` when none runs.
+
+### status
+
+`status` asks the server running on this database where it is, over the control socket, and prints `{"ui": "http://127.0.0.1:51234", "content": "http://127.0.0.1:51235", "ui_port": 51234, "content_port": 51235}`. It does not open the database. With no server it exits 3.
 
 ### skill
 

@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::artifact::{ListRow, Ref};
 use crate::comments::{Added, CommentList, ThreadResult};
+use crate::control::Status;
 use crate::embeds::EmbedList;
 use crate::error::Error;
 use crate::sections::Outline;
@@ -242,6 +243,12 @@ impl Render for ServeStarted {
             "ui       {}\ncontent  {}\nreviewer {}\n",
             self.ui, self.content, self.reviewer
         )
+    }
+}
+
+impl Render for Status {
+    fn text(&self) -> String {
+        format!("ui       {}\ncontent  {}\n", self.ui, self.content)
     }
 }
 

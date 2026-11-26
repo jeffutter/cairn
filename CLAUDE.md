@@ -25,7 +25,7 @@ Build and test inside `nix develop` (or via direnv). It sets `PELE_JS` (Mermaid 
 
 ## Architecture
 
-- **Core library, two frontends.** All sqlite access goes through the core (`db.rs`, `artifact.rs`, `comments.rs`, ...), so CLI and server share identical connection setup (WAL, immediate write transactions, 5 s busy timeout, optional `--base` revision check; ADR 0007). The CLI opens the database directly; there is no daemon. `serve` (`serve.rs`, `api.rs`, `ui.rs`) calls the same core functions in-process, and the web UI does not go through `/api/v1`.
+- **Core library, two frontends.** All sqlite access goes through the core (`db.rs`, `artifact.rs`, `comments.rs`, ...), so CLI and server share identical connection setup (WAL, immediate write transactions, 5 s busy timeout, optional `--base` revision check; ADR 0007). The CLI opens the database directly and never needs a daemon; it asks a running `serve` only for its URL, over a unix socket (`control.rs`, ADR 0009). `serve` (`serve.rs`, `api.rs`, `ui.rs`) calls the same core functions in-process, and the web UI does not go through `/api/v1`.
 - **Revisions are immutable file sets stored in sqlite** (ADR 0003). Kind is fixed at creation. Markdown sections are addressed by heading path (`sections.rs`); markdown embeds other Artifacts with `cairn:<id>` (`embeds.rs`), resolved at submit.
 - **Two origins.** `serve` runs two axum listeners: UI + API on `--port` (7878) and untrusted agent content on `--content-port` (default port+1), so agent-supplied html/svg can never act as the UI (ADR 0005). A non-loopback `--bind` drops the DNS-rebinding guard and has no auth.
 - **Mermaid** is rendered server-side by Pele in embedded QuickJS (`rquickjs`, `diagram.rs`); `serve` keeps one long-lived engine.

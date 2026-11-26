@@ -69,18 +69,21 @@ pub struct Cli {
 pub enum Command {
     /// Serve the web UI and the untrusted-content port (loopback unless --bind)
     Serve {
-        /// UI port
-        #[arg(long, env = "CAIRN_PORT", default_value_t = 7878,
-              value_parser = clap::value_parser!(u16).range(1..))]
+        /// UI port; 0 picks a free port
+        #[arg(long, env = "CAIRN_PORT", default_value_t = 7878)]
         port: u16,
-        /// Untrusted-content port (default: the UI port + 1)
-        #[arg(long, env = "CAIRN_CONTENT_PORT",
-              value_parser = clap::value_parser!(u16).range(1..))]
+        /// Untrusted-content port; 0 picks a free port (default: the UI port + 1,
+        /// or a free port when --port is 0)
+        #[arg(long, env = "CAIRN_CONTENT_PORT")]
         content_port: Option<u16>,
         /// Address to listen on; 0.0.0.0 exposes the UI to the network, and
         /// then anyone who can reach the ports can read and comment
         #[arg(long, env = "CAIRN_BIND", default_value = "127.0.0.1")]
         bind: std::net::IpAddr,
+        /// Host name to put in the URLs the server reports, for browsers on other
+        /// machines; needs a non-loopback --bind
+        #[arg(long, env = "CAIRN_ADVERTISE_HOST", value_name = "HOST")]
+        advertise_host: Option<String>,
         /// Author name the UI posts under (always with role reviewer)
         #[arg(long, env = "CAIRN_REVIEWER", default_value = "reviewer")]
         reviewer_name: String,
@@ -129,14 +132,16 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["out", "section"])]
         render: bool,
     },
-    /// Print the web UI URL of an Artifact (`abc123` or `abc123@2`) without checking a server
+    /// Print the web UI URL of an Artifact (`abc123` or `abc123@2`), on the running server if there is one
     View {
         /// `abc123` or `abc123@2`
         target: String,
-        /// UI base URL (default: http://127.0.0.1:<CAIRN_PORT or 7878>)
+        /// UI base URL (default: the running server's, else http://127.0.0.1:<CAIRN_PORT or 7878>)
         #[arg(long, env = "CAIRN_URL")]
         url: Option<String>,
     },
+    /// Ask the running `cairn serve` for its URL and ports (exit 3 if none is running)
+    Status,
     /// List a markdown Artifact's headings with their paths and sizes
     Outline {
         /// `abc123` or `abc123@2`; defaults to the latest Revision

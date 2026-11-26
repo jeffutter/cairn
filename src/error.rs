@@ -15,7 +15,10 @@ pub const EXIT_CODES: &[(u8, &str)] = &[
         "Unexpected error, including database busy past the 5 s timeout",
     ),
     (2, "Usage error, including `delete` without `--yes`"),
-    (3, "Not found, including a write to a deleted Artifact"),
+    (
+        3,
+        "Not found, including a write to a deleted Artifact and `status` with no running server",
+    ),
     (
         4,
         "Rejected input: limits, bad Kind, missing embed target, invalid Mermaid, ambiguous or missing Section",

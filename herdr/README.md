@@ -18,7 +18,7 @@ A [Herdr](https://herdr.dev) mod: a side panel that follows the Artifacts cairn 
   ```
 
   Herdr's shipped layouts and the `tabs` mod are read-only, so clone them (`herdr-app do layout.clone`, `herdr-app do mod.clone`) and edit the clones. The `tabs` mod's `panelButton("changes", ...)` line is the one to copy for a Cairn button.
-- "Open" in the panel header opens the web UI, so run `cairn serve` for that. Everything else reads sqlite directly and needs no server.
+- "Open" in the panel header opens the web UI at the URL `cairn view` prints, so run `cairn serve` for that. Everything else reads sqlite directly and needs no server.
 
 ## Install by hand
 

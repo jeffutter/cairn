@@ -57,6 +57,17 @@ Nix users can link the `skill` package from this flake into the skills directory
 
 Inside Claude Code and pi, cairn prints JSON on its own. For another harness, export `CAIRN_FORMAT=json`.
 
+### Run the server in the background (macOS)
+
+With Home Manager, import the flake's module and enable it:
+
+```nix
+imports = [ inputs.cairn.homeManagerModules.default ];
+services.cairn.enable = true;
+```
+
+launchd then keeps `cairn serve` running on free ports. `cairn status` prints its address, and `cairn view <id>` prints the full link to an artifact. Logs are in `~/Library/Logs/cairn.log`.
+
 ## Review a document
 
 1. Start the review UI in a terminal and leave it running:
@@ -113,7 +124,7 @@ The database is `$XDG_DATA_HOME/cairn/cairn.db`, usually `~/.local/share/cairn/c
 
 The UI and artifact content are served from different ports, so a hostile HTML page cannot act as the review UI. HTML runs in a sandboxed frame with no network access.
 
-`cairn serve` binds to loopback. `--bind 0.0.0.0` makes it reachable from other machines, but cairn has no authentication. Anyone who can reach the port can read and comment. Set `CAIRN_URL` to the address your browser uses so `cairn view` prints a working link.
+`cairn serve` binds to loopback. `--bind 0.0.0.0` makes it reachable from other machines, but cairn has no authentication. Anyone who can reach the port can read and comment. Add `--advertise-host <name>`, the name your browser uses for this machine, so `cairn view` prints a working link.
 
 ## More documentation
 

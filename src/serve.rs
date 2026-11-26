@@ -1,4 +1,5 @@
-//! `cairn serve`: two loopback listeners in one process.
+//! `cairn serve`: two loopback listeners in one process, plus the control
+//! socket that reports where they are (`control`).
 //!
 //! The UI port serves the review UI (`ui`) and never any Artifact bytes. The
 //! content port serves every Agent-supplied byte at `/a/<id>/<rev>/<path>`,
@@ -24,9 +25,11 @@ use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{Next, from_fn, map_response};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::oneshot;
 
 use crate::artifact;
+use crate::control;
 use crate::db;
 use crate::diagram::{self, Format};
 use crate::error::Error;
@@ -38,17 +41,19 @@ const SCRIPTLESS_CSP: &str = "sandbox; default-src 'none'; style-src 'unsafe-inl
 /// Mermaid is served at this fixed path of its Revision; the source is not.
 const MERMAID_PATH: &str = "diagram.svg";
 
-/// The UI port and the content port, with defaults and clashes resolved.
+/// The UI port and the content port, with defaults and clashes resolved. Port 0
+/// asks the OS for a free port.
 pub fn resolve_ports(port: u16, content_port: Option<u16>) -> Result<(u16, u16), Error> {
     let content = match content_port {
         Some(p) => p,
+        None if port == 0 => 0,
         None => port.checked_add(1).ok_or_else(|| {
             Error::Usage(format!(
                 "no default content port after {port}; pass --content-port"
             ))
         })?,
     };
-    if content == port {
+    if content == port && port != 0 {
         return Err(Error::Usage("--port and --content-port must differ".into()));
     }
     Ok((port, content))
@@ -129,24 +134,65 @@ struct ContentState {
     renderer: Renderer,
 }
 
-/// Run both listeners until ctrl-c. Both ports are bound before anything
-/// runs, so a taken port fails fast with a non-zero exit.
-pub fn serve(
-    db_path: &Path,
-    bind_ip: IpAddr,
-    ui_port: u16,
-    content_port: u16,
-    reviewer: &str,
-    fmt: crate::output::Format,
-) -> Result<u8, Error> {
+/// What `serve` was asked to do.
+pub struct Options {
+    pub bind: IpAddr,
+    /// 0 picks a free port.
+    pub ui_port: u16,
+    /// 0 picks a free port.
+    pub content_port: u16,
+    pub advertise_host: Option<String>,
+    pub reviewer: String,
+}
+
+/// The host to put in reported URLs: the advertised name, else the bind address.
+fn url_host(bind: IpAddr, advertise: Option<&str>) -> Result<String, Error> {
+    if let Some(host) = advertise {
+        // The loopback Host check would refuse every request for another name.
+        if bind.is_loopback() {
+            return Err(Error::Usage(
+                "--advertise-host needs a non-loopback --bind".into(),
+            ));
+        }
+        return host_name(&format!("{host}:1"), 1, true).ok_or_else(|| {
+            Error::Usage(format!(
+                "--advertise-host takes a host name or IP address without a port, got {host:?}"
+            ))
+        });
+    }
+    // A wildcard address is not a URL a browser can open; use loopback.
+    Ok(match bind {
+        a if a.is_unspecified() => "127.0.0.1".to_string(),
+        IpAddr::V4(a) => a.to_string(),
+        IpAddr::V6(a) => format!("[{a}]"),
+    })
+}
+
+fn local_port(l: &TcpListener) -> Result<u16, Error> {
+    l.local_addr()
+        .map(|a| a.port())
+        .map_err(|e| Error::Unexpected(format!("cannot read the listening port: {e}")))
+}
+
+/// Run both listeners until SIGINT or SIGTERM. Both ports and the control
+/// socket are bound before anything runs, so a taken port or a second server on
+/// the same database fails fast with a non-zero exit.
+pub fn serve(db_path: &Path, options: Options, fmt: crate::output::Format) -> Result<u8, Error> {
+    let host = url_host(options.bind, options.advertise_host.as_deref())?;
     // Create and migrate the database up front so a bad path fails here.
     db::open(db_path)?;
-    let ui_listener = bind(bind_ip, ui_port)?;
-    let content_listener = bind(bind_ip, content_port)?;
-    let exposed = !bind_ip.is_loopback();
+    // Declared first so it drops last: the socket file outlives the listeners.
+    let claim = control::Claim::acquire(db_path)?;
+    let ui_listener = bind(options.bind, options.ui_port)?;
+    let content_listener = bind(options.bind, options.content_port)?;
+    // Everything below uses the ports actually bound, never the requested 0.
+    let ui_port = local_port(&ui_listener)?;
+    let content_port = local_port(&content_listener)?;
+    let control_listener = claim.listen()?;
+    let exposed = !options.bind.is_loopback();
     let ui = ui_router(
         db_path.to_path_buf(),
-        reviewer,
+        &options.reviewer,
         content_port,
         ui_port,
         exposed,
@@ -158,23 +204,17 @@ pub fn serve(
         exposed,
         Renderer::start(),
     );
-    // A wildcard address is not a URL a browser can open; print loopback.
-    let shown = if bind_ip.is_unspecified() {
-        "127.0.0.1".to_string()
-    } else {
-        match bind_ip {
-            IpAddr::V4(a) => a.to_string(),
-            IpAddr::V6(a) => format!("[{a}]"),
-        }
+    let status = control::Status {
+        ui: format!("http://{host}:{ui_port}"),
+        content: format!("http://{host}:{content_port}"),
+        ui_port,
+        content_port,
     };
-    crate::output::emit(
-        fmt,
-        &crate::output::ServeStarted {
-            ui: format!("http://{shown}:{ui_port}"),
-            content: format!("http://{shown}:{content_port}"),
-            reviewer: reviewer.to_string(),
-        },
-    );
+    let started = crate::output::ServeStarted {
+        ui: status.ui.clone(),
+        content: status.content.clone(),
+        reviewer: options.reviewer,
+    };
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -182,8 +222,15 @@ pub fn serve(
     rt.block_on(async move {
         let io = |e: std::io::Error| Error::Unexpected(format!("server error: {e}"));
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        // Service managers stop with SIGTERM; without a handler the socket
+        // file would be left behind.
+        let mut terminate = signal(SignalKind::terminate()).map_err(io)?;
+        let mut interrupt = signal(SignalKind::interrupt()).map_err(io)?;
         tokio::spawn(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            tokio::select! {
+                _ = terminate.recv() => {}
+                _ = interrupt.recv() => {}
+            }
             let _ = stop_tx.send(true);
         });
         let shutdown = |mut rx: tokio::sync::watch::Receiver<bool>| async move {
@@ -191,6 +238,10 @@ pub fn serve(
         };
         let ui_l = tokio::net::TcpListener::from_std(ui_listener).map_err(io)?;
         let content_l = tokio::net::TcpListener::from_std(content_listener).map_err(io)?;
+        let control_l = tokio::net::UnixListener::from_std(control_listener).map_err(io)?;
+        tokio::spawn(control::answer(control_l, status));
+        // Printed once signals are handled and the socket is answering.
+        crate::output::emit(fmt, &started);
         let (a, b) = tokio::join!(
             axum::serve(ui_l, ui).with_graceful_shutdown(shutdown(stop_rx.clone())),
             axum::serve(content_l, content).with_graceful_shutdown(shutdown(stop_rx)),
@@ -552,6 +603,27 @@ mod tests {
         assert_eq!(resolve_ports(7878, Some(9000)).unwrap(), (7878, 9000));
         assert!(resolve_ports(65535, None).is_err());
         assert!(resolve_ports(7878, Some(7878)).is_err());
+        assert_eq!(resolve_ports(0, None).unwrap(), (0, 0));
+        assert_eq!(resolve_ports(0, Some(0)).unwrap(), (0, 0));
+        assert_eq!(resolve_ports(0, Some(9000)).unwrap(), (0, 9000));
+    }
+
+    #[test]
+    fn url_host_prefers_the_advertised_name() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        assert_eq!(url_host(ip("127.0.0.1"), None).unwrap(), "127.0.0.1");
+        assert_eq!(url_host(ip("0.0.0.0"), None).unwrap(), "127.0.0.1");
+        assert_eq!(url_host(ip("::1"), None).unwrap(), "[::1]");
+        assert_eq!(url_host(ip("0.0.0.0"), Some("nas.lan")).unwrap(), "nas.lan");
+        for (bind, host) in [
+            ("127.0.0.1", "nas.lan"),
+            ("0.0.0.0", "nas.lan:80"),
+            ("0.0.0.0", "http://nas"),
+            ("0.0.0.0", ""),
+        ] {
+            let e = url_host(ip(bind), Some(host)).unwrap_err();
+            assert_eq!(e.exit_code(), 2, "{bind} {host:?}");
+        }
     }
 
     #[test]

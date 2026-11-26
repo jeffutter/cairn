@@ -35,13 +35,13 @@ The core is the only code that opens the database, so CLI and server cannot conf
 | Process | What it does |
 | --- | --- |
 | `cairn <command>` | Opens the database, does one thing, prints JSON, exits. `comment list --wait` polls the database every 500 ms (a constant in core). |
-| `cairn serve` | Two axum listeners in one process (`tokio::try_join!`), both on `127.0.0.1` unless `--bind <ip>` (env `CAIRN_BIND`) says otherwise: the UI and `/api/v1` on `--port` (default 7878), untrusted content on `--content-port` (default port + 1). A non-loopback bind (e.g. `0.0.0.0`) accepts any well-formed `Host` on the listener's port and builds the content origin and CSPs from the requesting `Host`, so the loopback DNS-rebinding guard no longer applies and there is no authentication: anyone who can reach the ports can read and comment. A taken port is a clear non-zero exit, never a random port, because the CSP `frame-ancestors` needs a predictable origin. |
+| `cairn serve` | Two axum listeners in one process (`tokio::try_join!`), both on `127.0.0.1` unless `--bind <ip>` (env `CAIRN_BIND`) says otherwise: the UI and `/api/v1` on `--port` (default 7878), untrusted content on `--content-port` (default port + 1). A non-loopback bind (e.g. `0.0.0.0`) accepts any well-formed `Host` on the listener's port and builds the content origin and CSPs from the requesting `Host`, so the loopback DNS-rebinding guard no longer applies and there is no authentication: anyone who can reach the ports can read and comment. A taken port is a clear non-zero exit, never a silent fallback to another port. `--port 0` asks for free ports; the origins and CSP `frame-ancestors` are built from the ports actually bound. `serve` also listens on a unix socket, `<database path>.sock`, that reports those URLs to the CLI ([ADR 0009](adr/0009-find-the-server-through-a-unix-socket.md)). |
 
 CLI and server write the same database concurrently. WAL mode makes that safe; writes wait up to a 5 s busy timeout ([ADR 0007](adr/0007-immediate-write-transactions-and-optional-base-check.md)).
 
 ## Configuration and state
 
-- The database is the only state on disk. Path: `--db`, then `CAIRN_DB`, then `$XDG_DATA_HOME/cairn/cairn.db` (fallback `~/.local/share/cairn/cairn.db`, also on macOS). The directory and schema are created on first use by any subcommand; there is no `init`. One database per user.
+- The database is the only durable state on disk; a running `serve` adds `<database>.sock` and `<database>.sock.lock` beside it. Database path: `--db`, then `CAIRN_DB`, then `$XDG_DATA_HOME/cairn/cairn.db` (fallback `~/.local/share/cairn/cairn.db`, also on macOS). The directory and schema are created on first use by any subcommand; there is no `init`. One database per user.
 - No config file in v1. Everything is a flag with an env var; the full list is in [cli.md](cli.md#global-flags).
 - The database is created with `auto_vacuum=FULL` so deleting shrinks the file.
 
@@ -51,6 +51,7 @@ Rust with clap, rusqlite, axum, maud, pulldown-cmark and rquickjs. The nix flake
 
 - `packages.default`: the crane build. rquickjs needs only `clang` added to `nativeBuildInputs`. Pele's `pele.global.js` is pinned with `fetchzip` and embedded with `include_str!`. htmx is pinned with `fetchurl`. There is no npm and no JavaScript build. When `PELE_JS` is unset (plain `cargo build` outside nix), `build.rs` embeds a stub script instead and sets `cfg(cairn_pele_stub)`: everything builds, and Mermaid submit/render fails at runtime with "built without PELE_JS". Build with `nix develop` or `nix build` for Mermaid.
 - `devShells.default`: rust-overlay toolchain, clang and mold on Linux, `cargo-watch`, sqlite. Dev loop: `cargo watch -x 'run -- serve'`.
+- `homeManagerModules.default`: `services.cairn`, a launchd agent running `serve --port 0` (macOS only).
 - `formatter`: nixpkgs-fmt.
 - `checks`: build, clippy, fmt, and nextest. The nextest run includes the OpenAPI snapshot test and the skill drift tests, so nix CI catches both kinds of drift.
 

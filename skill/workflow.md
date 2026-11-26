@@ -4,7 +4,7 @@
 cairn submit plan.md
 ```
 
-2. Tell the human the Artifact id. Wait for Comments. `--wait` blocks until a Comment newer than the highest existing one arrives. Exit 5 means none arrived in time. Run the command again.
+2. Run `cairn view abc123` and give the human the full URL it prints, with the Artifact id (see "Link the human to an Artifact"). Wait for Comments. `--wait` blocks until a Comment newer than the highest existing one arrives. Exit 5 means none arrived in time. Run the command again.
 
 ```sh
 cairn comment list abc123 --wait

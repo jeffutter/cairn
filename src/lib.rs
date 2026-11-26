@@ -4,6 +4,7 @@ pub mod bundle;
 pub mod cli;
 pub mod comments;
 pub mod config;
+pub mod control;
 pub mod db;
 pub mod diagram;
 pub mod embeds;
@@ -82,23 +83,27 @@ fn cwd() -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_default()
 }
 
-/// The UI URL of `target`. The base is `--url` / `CAIRN_URL`, else the default
-/// loopback UI port (`CAIRN_PORT` or 7878). No server is contacted.
-fn view_url(target: &str, url: Option<&str>) -> Result<String, Error> {
+/// The UI URL of `target`. The base is `--url` / `CAIRN_URL`, else the URL the
+/// server running on `db` reports, else the default loopback UI port
+/// (`CAIRN_PORT` or 7878).
+fn view_url(target: &str, url: Option<&str>, db: &std::path::Path) -> Result<String, Error> {
     let (id, rev) = artifact::parse_target(target)?;
     if !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return Err(Error::Usage(format!("bad artifact id in {target:?}")));
     }
     let base = match url.map(str::trim).filter(|u| !u.is_empty()) {
         Some(u) => u.trim_end_matches('/').to_string(),
-        None => {
-            let port = std::env::var("CAIRN_PORT")
-                .ok()
-                .and_then(|p| p.trim().parse::<u16>().ok())
-                .filter(|p| *p >= 1)
-                .unwrap_or(7878);
-            format!("http://127.0.0.1:{port}")
-        }
+        None => match control::query(db)? {
+            Some(server) => server.ui,
+            None => {
+                let port = std::env::var("CAIRN_PORT")
+                    .ok()
+                    .and_then(|p| p.trim().parse::<u16>().ok())
+                    .filter(|p| *p >= 1)
+                    .unwrap_or(7878);
+                format!("http://127.0.0.1:{port}")
+            }
+        },
     };
     Ok(match rev {
         Some(n) => format!("{base}/a/{id}@{n}"),
@@ -115,17 +120,35 @@ pub fn run(command: Command, ctx: &Context, fmt: Format) -> Result<u8, Error> {
         port,
         content_port,
         bind,
+        advertise_host,
         reviewer_name,
     } = command
     {
-        let (ui, content) = serve::resolve_ports(port, content_port)?;
-        return serve::serve(&ctx.db_path, bind, ui, content, &reviewer_name, fmt);
+        let (ui_port, content_port) = serve::resolve_ports(port, content_port)?;
+        let options = serve::Options {
+            bind,
+            ui_port,
+            content_port,
+            advertise_host,
+            reviewer: reviewer_name,
+        };
+        return serve::serve(&ctx.db_path, options, fmt);
     }
     if let Command::Skill { check } = command {
         return skill::run(check.as_deref());
     }
     if let Command::View { target, url } = command {
-        println!("{}", view_url(&target, url.as_deref())?);
+        println!("{}", view_url(&target, url.as_deref(), &ctx.db_path)?);
+        return Ok(0);
+    }
+    if let Command::Status = command {
+        let status = control::query(&ctx.db_path)?.ok_or_else(|| {
+            Error::NotFound(format!(
+                "no cairn server is running for {}",
+                ctx.db_path.display()
+            ))
+        })?;
+        emit(fmt, &status);
         return Ok(0);
     }
     match command {
@@ -291,6 +314,7 @@ pub fn run(command: Command, ctx: &Context, fmt: Format) -> Result<u8, Error> {
         Command::Comment { .. }
         | Command::Serve { .. }
         | Command::Skill { .. }
+        | Command::Status
         | Command::View { .. } => {
             unreachable!("handled above")
         }

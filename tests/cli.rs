@@ -2867,7 +2867,7 @@ mod diagrams {
 
 mod serve {
     use super::cairn;
-    use std::io::{Read, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::process::Stdio;
 
@@ -2926,14 +2926,117 @@ mod serve {
         assert!(String::from_utf8_lossy(&out.stderr).contains(&port.to_string()));
     }
 
+    /// A running `serve` and its startup line; killed if the test panics.
+    struct Server {
+        child: std::process::Child,
+        startup: serde_json::Value,
+    }
+
+    impl Server {
+        fn start(db: &std::path::Path, args: &[&str]) -> Server {
+            let mut child = serve_cmd(db)
+                .args(args)
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(child.stdout.as_mut().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let startup = serde_json::from_str(&line).unwrap();
+            Server { child, startup }
+        }
+
+        fn stop(&mut self, signal: &str) -> std::process::ExitStatus {
+            let ok = std::process::Command::new("kill")
+                .args([signal, &self.child.id().to_string()])
+                .status()
+                .unwrap();
+            assert!(ok.success());
+            self.child.wait().unwrap()
+        }
+    }
+
+    impl Drop for Server {
+        fn drop(&mut self) {
+            self.child.kill().ok();
+            self.child.wait().ok();
+        }
+    }
+
+    fn client(db: &std::path::Path, args: &[&str]) -> std::process::Output {
+        let mut c = cairn();
+        for v in ["CAIRN_URL", "CAIRN_PORT"] {
+            c.env_remove(v);
+        }
+        c.arg("--db").arg(db).args(args).output().unwrap()
+    }
+
     #[test]
-    fn port_zero_is_a_usage_error() {
+    fn random_ports_are_discoverable_over_the_socket() {
         let dir = tempfile::tempdir().unwrap();
-        let out = serve_cmd(&dir.path().join("c.db"))
-            .args(["--port", "0"])
-            .output()
-            .unwrap();
-        assert_eq!(out.status.code(), Some(2));
+        let db = dir.path().join("c.db");
+        let socket = dir.path().join("c.db.sock");
+        let none = client(&db, &["status"]);
+        assert_eq!(none.status.code(), Some(3), "{none:?}");
+
+        let mut server = Server::start(&db, &["--port", "0"]);
+        let out = client(&db, &["status"]);
+        assert!(out.status.success(), "{out:?}");
+        let status: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let ui_port = status["ui_port"].as_u64().unwrap();
+        let content_port = status["content_port"].as_u64().unwrap();
+        assert!(ui_port > 0 && content_port > 0 && ui_port != content_port);
+        let ui = format!("http://127.0.0.1:{ui_port}");
+        assert_eq!(status["ui"], ui);
+        assert_eq!(server.startup["ui"], ui);
+        assert_eq!(server.startup["content"], status["content"]);
+
+        // The reported port answers, so the Host check knows the real port.
+        let mut s = TcpStream::connect(("127.0.0.1", ui_port as u16)).unwrap();
+        write!(
+            s,
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:{ui_port}\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut r = String::new();
+        s.read_to_string(&mut r).unwrap();
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+
+        let view = client(&db, &["view", "abc23@2"]);
+        assert_eq!(
+            String::from_utf8_lossy(&view.stdout),
+            format!("{ui}/a/abc23@2\n")
+        );
+        let overridden = client(&db, &["view", "abc23", "--url", "http://h:1"]);
+        assert_eq!(
+            String::from_utf8_lossy(&overridden.stdout),
+            "http://h:1/a/abc23\n"
+        );
+
+        let second = serve_cmd(&db).args(["--port", "0"]).output().unwrap();
+        assert_eq!(second.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&second.stderr).contains(&ui));
+
+        assert!(server.stop("-TERM").success());
+        assert!(!socket.exists());
+        assert_eq!(client(&db, &["status"]).status.code(), Some(3));
+    }
+
+    #[test]
+    fn sigint_removes_the_socket_and_a_killed_server_can_be_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("c.db");
+        let socket = dir.path().join("c.db.sock");
+        let mut first = Server::start(&db, &["--port", "0"]);
+        first.stop("-KILL");
+        assert!(socket.exists());
+        assert_eq!(client(&db, &["status"]).status.code(), Some(3));
+
+        let mut next = Server::start(&db, &["--port", "0"]);
+        assert!(client(&db, &["status"]).status.success());
+        assert!(next.stop("-INT").success());
+        assert!(!socket.exists());
     }
 
     #[test]
