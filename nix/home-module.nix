@@ -1,7 +1,8 @@
 # Home Manager module: `cairn serve` as a launchd agent (macOS).
 #
-# The server listens on free ports chosen at start. The CLI finds it over the
-# control socket beside the database (`cairn status`, `cairn view`).
+# The server listens on `services.cairn.port` (default 7878; 0 picks free
+# ports). The CLI finds it over the control socket beside the database
+# (`cairn status`, `cairn view`).
 self:
 { config, lib, pkgs, ... }:
 let
@@ -19,6 +20,16 @@ in
       description = "The cairn package to run. Install the same one for the CLI.";
     };
 
+    port = lib.mkOption {
+      type = lib.types.port;
+      default = 7878;
+      example = 0;
+      description = ''
+        Web UI port. The content port is the next one up, unless `extraArgs`
+        sets `--content-port`. 0 picks free ports for both.
+      '';
+    };
+
     extraArgs = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -26,7 +37,7 @@ in
       description = ''
         Further `cairn serve` flags. A non-loopback `--bind` has no
         authentication: anyone who can reach the ports can read and comment.
-        Do not pass `--port`; the module already does.
+        Do not pass `--port`; set the `port` option.
       '';
     };
   };
@@ -42,7 +53,7 @@ in
     launchd.agents.cairn = {
       enable = true;
       config = {
-        ProgramArguments = [ "${cfg.package}/bin/cairn" "serve" "--port" "0" ] ++ cfg.extraArgs;
+        ProgramArguments = [ "${cfg.package}/bin/cairn" "serve" "--port" (toString cfg.port) ] ++ cfg.extraArgs;
         RunAtLoad = true;
         KeepAlive = true;
         # launchd does not pass the shell's XDG_DATA_HOME, and the server and

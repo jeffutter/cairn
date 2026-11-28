@@ -66,7 +66,7 @@ imports = [ inputs.cairn.homeManagerModules.default ];
 services.cairn.enable = true;
 ```
 
-launchd then keeps `cairn serve` running on free ports. `cairn status` prints its address, and `cairn view <id>` prints the full link to an artifact. Logs are in `~/Library/Logs/cairn.log`.
+launchd then keeps `cairn serve` running on port 7878, with agent content on 7879. Set `services.cairn.port` to use another port, or to `0` to pick free ports. `cairn status` prints its address, and `cairn view <id>` prints the full link to an artifact. Logs are in `~/Library/Logs/cairn.log`.
 
 ## Review a document
 

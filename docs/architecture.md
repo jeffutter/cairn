@@ -51,7 +51,7 @@ Rust with clap, rusqlite, axum, maud, pulldown-cmark and rquickjs. The nix flake
 
 - `packages.default`: the crane build. rquickjs needs only `clang` added to `nativeBuildInputs`. Pele's `pele.global.js` is pinned with `fetchzip` and embedded with `include_str!`. htmx is pinned with `fetchurl`. There is no npm and no JavaScript build. When `PELE_JS` is unset (plain `cargo build` outside nix), `build.rs` embeds a stub script instead and sets `cfg(cairn_pele_stub)`: everything builds, and Mermaid submit/render fails at runtime with "built without PELE_JS". Build with `nix develop` or `nix build` for Mermaid.
 - `devShells.default`: rust-overlay toolchain, clang and mold on Linux, `cargo-watch`, sqlite. Dev loop: `cargo watch -x 'run -- serve'`.
-- `homeManagerModules.default`: `services.cairn`, a launchd agent running `serve --port 0` (macOS only).
+- `homeManagerModules.default`: `services.cairn`, a launchd agent running `serve --port <services.cairn.port>` (macOS only). The port defaults to 7878; 0 picks free ports.
 - `formatter`: nixpkgs-fmt.
 - `checks`: build, clippy, fmt, and nextest. The nextest run includes the OpenAPI snapshot test and the skill drift tests, so nix CI catches both kinds of drift.
 
