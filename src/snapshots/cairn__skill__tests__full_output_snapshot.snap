@@ -5,7 +5,7 @@ expression: generate()
 ---
 name: cairn
 description: Submit documents, diagrams, images and html pages to cairn for human review, and read and answer the reviewer's Comments. Use when you want a human to review or comment on something you produced.
-cairn_version: 0.2.0
+cairn_version: 0.2.1
 hash: 1efae1f8933e92619cda84c96bfdf2c610743f8c7500d9f46b0cc5095f4a2cd2
 ---
 
